@@ -257,7 +257,40 @@ Scopes: read, write, admin
 
 ### 7.2 Enter Client Credentials
 
-1. Scroll to **"2a. Use Existing Client"** section
+1. Scroll to **"2a. UsWorkspace
+Projects
+Silicon Architect
+￼Contact Support
+￼Deploy Changes
+￼￼
+P95 RESPONSE
+
+5ms
+P95 over the past 3m
+
+APP HEALTH
+
+Unhealthy
+Unhealthy · past 3m
+
+TOTAL REQUESTS
+
+4
+4 in the past 3m
+
+ERROR RATE
+
+25.0%
+Error rate over the past 3m
+
+P90 5ms
+
+TAKE ONE STEP FURTHER WITH YOUR MCP APP
+Deploy to ChatGPT
+
+Launch this MCP app as a native ChatGPT App and reach 800M+ weekly users.
+
+￼Open Guidee Existing Client"** section
 2. Enter your credentials from Step 3:
    ```
    Client ID: [Your Auth0 Client ID]

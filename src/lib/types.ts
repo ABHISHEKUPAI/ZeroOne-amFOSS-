@@ -37,6 +37,32 @@ export interface AssertionResult {
   failedAtStep: number | null;
 }
 
+export interface WaveformSignal {
+  /** '\u.tx' -> 'u.tx' */
+  name: string;
+  /** bit width, from the Bin column */
+  width: number;
+  /** hierarchical name => lives inside the DUT rather than the testbench */
+  isDut: boolean;
+  values: Array<{ cycle: number | 'init'; dec: string; bin: string }>;
+}
+
+/**
+ * A concrete execution, extracted from the SAT counterexample.
+ *
+ * This is NOT a simulation — there is no simulator. It is the trace the solver proved exists, in
+ * which the design violates its assertion. It follows that a PROVED design has no waveform at all:
+ * `trace` is null on success, and rendering anything there would be invention.
+ */
+export interface Waveform {
+  cycles: Array<number | 'init'>;
+  signals: WaveformSignal[];
+  failedAtCycle: number | null;
+  failedAssertion: string | null;
+  /** file:line span of the violated assertion, e.g. 'tb.v:11.48-11.80' */
+  src: string | null;
+}
+
 export interface VerificationResult {
   ok: boolean;
   method: 'bmc-sat';
@@ -46,6 +72,8 @@ export interface VerificationResult {
   assertions: AssertionResult[];
   /** counterexample trace lines (failures only) */
   counterexample: string[];
+  /** structured form of the counterexample. NULL when the proof succeeds — no violation exists. */
+  trace: Waveform | null;
   log: string;
   elapsedMs: number;
   ranAt: string;

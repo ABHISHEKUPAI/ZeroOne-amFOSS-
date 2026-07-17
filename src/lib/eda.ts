@@ -18,6 +18,8 @@ import {
   type SynthesisResult,
   type Target,
   type VerificationResult,
+  type Waveform,
+  type WaveformSignal,
 } from './types.js';
 
 /** Verilog identifier, with Yosys's leading-backslash public-name marker stripped. */
@@ -184,11 +186,13 @@ export async function verifyDesign(
     top,
     assertions: [],
     counterexample: [],
+    trace: null,
     log,
     elapsedMs: Date.now() - started,
     ranAt: new Date().toISOString(),
   });
 
+  // Every early-exit path below is a non-proof: no violation was found, so there is no trace.
   const listed = await listAsserts(files, top);
 
   // The testbench does not compile. Say that — do not call it "no assertions".
@@ -229,6 +233,8 @@ sat -verify -prove-asserts -seq ${depth} -show-all ${top}`,
       top,
       assertions: asserts.map((a) => ({ ...a, status: 'proved' as const, failedAtStep: null })),
       counterexample: [],
+      // Proved: the solver found NO model. There is no counterexample, so there is no waveform.
+      trace: null,
       log: tail(all.log, 3000),
       elapsedMs: Date.now() - started,
       ranAt: new Date().toISOString(),
@@ -246,6 +252,7 @@ sat -verify -prove-asserts -seq ${depth} -show-all ${top}`,
         top,
         assertions: [],
         counterexample: [],
+        trace: null,
         log: tail(all.log, 4000),
         elapsedMs: Date.now() - started,
         ranAt: new Date().toISOString(),
@@ -269,8 +276,17 @@ sat -verify -prove-asserts -seq ${depth} -show-all ${top}`,
       cell: a.cell,
       src: a.src,
       status: proved ? 'proved' : 'failed',
-      failedAtStep: proved ? null : failStep(one.log),
+      failedAtStep: proved ? null : failStep(one.log, a.cell),
     });
+  }
+
+  const cxLines = counterexampleLines(all.log);
+  const trace = parseTrace(cxLines);
+  const firstFailed = results.find((r) => r.status === 'failed');
+  if (trace && firstFailed) {
+    trace.failedAssertion = firstFailed.cell;
+    trace.src = firstFailed.src;
+    trace.failedAtCycle = firstFailed.failedAtStep;
   }
 
   return {
@@ -279,29 +295,98 @@ sat -verify -prove-asserts -seq ${depth} -show-all ${top}`,
     depth,
     top,
     assertions: results,
-    counterexample: counterexampleLines(all.log),
+    counterexample: cxLines,
+    trace,
     log: tail(all.log, 4000),
     elapsedMs: Date.now() - started,
     ranAt: new Date().toISOString(),
   };
 }
 
-/** The cycle at which the counterexample drives an assert's enable low. */
-function failStep(log: string): number | null {
-  const rows = [...log.matchAll(/^\s*(\d+)\s+\S*_EN\s+.*?\b0\s*$/gm)];
-  if (rows.length) return Number(rows[0][1]);
-  return null;
+/**
+ * The cycle at which THIS assertion was violated — or null when it cannot be known.
+ *
+ * `<cell>_EN` is the assertion's enable: 1 on cycles where it is actually checked. This runs on the
+ * ISOLATED single-assert proof, so the trace is a counterexample for this assertion alone, and the
+ * violation therefore lies on a cycle where EN == 1.
+ *
+ * When exactly one such cycle exists (the normal case — real assertions are guarded, e.g.
+ * `if (past_rst) ...`), that cycle IS the violation. When several exist we cannot tell which one
+ * the solver broke without the condition signal, so we return null rather than guess: the waveform
+ * then shows the real trace with no marker, instead of a red line on an innocent cycle.
+ *
+ * (The previous version matched `_EN ... 0` — the cycles where the assertion was NOT checked — for
+ * ANY assertion, not just this one. It was wrong in both directions.)
+ */
+function failStep(log: string, cell: string): number | null {
+  const esc = cell.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const re = new RegExp(String.raw`^\s*(\d+)\s+\\?${esc}_EN\s+1\s`, 'gm');
+  const enabled = [...log.matchAll(re)].map((m) => Number(m[1]));
+  return enabled.length === 1 ? enabled[0] : null;
 }
 
+/**
+ * The counterexample table, whole.
+ *
+ * Deliberately NOT truncated: this previously sliced to 60 lines, which kept only `init` and cycle
+ * 1 and discarded the rest of the trace — i.e. most of the evidence, and everything a waveform
+ * needs. The table is bounded by `-seq depth` anyway, so it cannot run away.
+ */
 function counterexampleLines(log: string): string[] {
   const i = log.search(/Signal Name\s+Dec\s+Hex\s+Bin|SAT proof finished - model found/);
   if (i === -1) return [];
   return log
     .slice(i)
     .split('\n')
-    .slice(0, 60)
     .map((l) => l.trimEnd())
     .filter(Boolean);
+}
+
+/** Row shape: `<time> <signal> <dec> <hex> <bin>`, where time is `init` or a cycle number. */
+const TRACE_ROW = /^\s*(init|\d+)\s+(\S+)\s+(-?\d+|x+)\s+([0-9a-fx]+)\s+([01x]+)\s*$/i;
+
+/**
+ * Turn the SAT counterexample table into a waveform.
+ *
+ * Skips `$`-prefixed names: those are compiler internals ($auto$async2sync..., $assert$...$_EN)
+ * that mean nothing to the engineer reading the trace.
+ */
+function parseTrace(lines: string[]): Waveform | null {
+  const byName = new Map<string, WaveformSignal>();
+  const cycles: Array<number | 'init'> = [];
+  const seen = new Set<string>();
+
+  for (const line of lines) {
+    const m = TRACE_ROW.exec(line);
+    if (!m) continue;
+
+    const time: number | 'init' = m[1] === 'init' ? 'init' : Number(m[1]);
+    const rawName = m[2];
+    if (rawName.startsWith('$')) continue;
+
+    const key = String(time);
+    if (!seen.has(key)) {
+      seen.add(key);
+      cycles.push(time);
+    }
+
+    const name = rawName.replace(/^\\/, '');
+    let sig = byName.get(name);
+    if (!sig) {
+      sig = { name, width: m[5].length, isDut: name.includes('.'), values: [] };
+      byName.set(name, sig);
+    }
+    sig.values.push({ cycle: time, dec: m[3], bin: m[5] });
+  }
+
+  if (byName.size === 0) return null;
+  return {
+    cycles,
+    signals: [...byName.values()].sort((a, b) => Number(b.isDut) - Number(a.isDut) || a.name.localeCompare(b.name)),
+    failedAtCycle: null,
+    failedAssertion: null,
+    src: null,
+  };
 }
 
 function tail(s: string, n: number): string {

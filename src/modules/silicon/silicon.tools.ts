@@ -199,7 +199,10 @@ export class SiliconTools {
       'Concurrent SVA — `assert property (@(posedge clk) ... |-> ...)` — is a SYNTAX ERROR here ' +
       '(it needs Verific, which the open-source Yosys does not ship). Express implication with a ' +
       'plain if, not |-> or |=>. An initial block will not work and $display is not captured. ' +
-      'Returns ok:false plus per-assertion results with source locations when a proof fails.',
+      'Returns ok:false plus per-assertion results with source locations when a proof fails. On ' +
+      'failure it also returns `trace`: the concrete per-cycle counterexample (signals x cycles) ' +
+      'the solver proved exists. `trace` is NULL when the proof succeeds — a proved design has no ' +
+      'counterexample.',
     inputSchema: z.object({
       design_id: z.string(),
       testbench: z
@@ -260,6 +263,9 @@ export class SiliconTools {
       // The critical contract: a broken design returns ok:false with non-empty assertions[]
       // carrying src. This is the proof the pass/fail signal is real and not self-graded.
       assertions: result.assertions,
+      // Structured per-cycle trace for waveform rendering. NON-NULL ONLY ON FAILURE: a proved
+      // design has no counterexample, and inventing one would be a lie.
+      trace: result.trace,
       counterexample: result.counterexample.slice(0, 40),
       log: result.ok ? undefined : result.log,
       next_step: result.ok
