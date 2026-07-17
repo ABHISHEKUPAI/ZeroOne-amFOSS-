@@ -1,3 +1,4 @@
+import { totalmem } from 'node:os';
 import { HealthCheck, HealthCheckInterface, HealthCheckResult } from '@nitrostack/core';
 
 /**
@@ -20,25 +21,30 @@ export class SystemHealthCheck implements HealthCheckInterface {
   async check(): Promise<HealthCheckResult> {
     try {
       const memoryUsage = process.memoryUsage();
-      const uptime = Date.now() - this.startTime;
-      const uptimeSeconds = Math.floor(uptime / 1000);
-      
-      // Convert memory to MB
-      const memoryUsedMB = Math.round(memoryUsage.heapUsed / 1024 / 1024);
-      const memoryTotalMB = Math.round(memoryUsage.heapTotal / 1024 / 1024);
-      
-      // Consider unhealthy if memory usage is > 90%
-      const memoryPercent = (memoryUsage.heapUsed / memoryUsage.heapTotal) * 100;
-      const isHealthy = memoryPercent < 90;
-      
+      const uptimeSeconds = Math.floor((Date.now() - this.startTime) / 1000);
+
+      // Measure RSS against the HOST's memory.
+      //
+      // The starter compared heapUsed/heapTotal and called >90% "High memory usage detected".
+      // That ratio is meaningless: V8 keeps heapTotal just above heapUsed and grows it on demand,
+      // so a perfectly healthy process sits at ~92% forever. This server therefore reported
+      // "degraded" permanently — and NitroCloud surfaced that as **Unhealthy** while RSS was 76MB
+      // of 3.8GB. A health check that is always red tells you nothing.
+      const rssMB = Math.round(memoryUsage.rss / 1024 / 1024);
+      const hostMB = Math.round(totalmem() / 1024 / 1024);
+      const usedPercent = hostMB > 0 ? (rssMB / hostMB) * 100 : 0;
+
+      // Yosys-as-WASM spikes to ~670MB mid-run, so a high transient RSS is expected and normal.
+      // Only flag a host that genuinely cannot fit the pipeline.
+      const healthy = hostMB === 0 || usedPercent < 90;
+
       return {
-        status: isHealthy ? 'up' : 'degraded',
-        message: isHealthy 
-          ? 'System is healthy' 
-          : 'High memory usage detected',
+        status: healthy ? 'up' : 'degraded',
+        message: healthy ? 'System is healthy' : `High memory usage: ${rssMB}MB of ${hostMB}MB`,
         details: {
           uptime: `${uptimeSeconds}s`,
-          memory: `${memoryUsedMB}MB / ${memoryTotalMB}MB (${Math.round(memoryPercent)}%)`,
+          memory: `${rssMB}MB RSS / ${hostMB}MB host (${Math.round(usedPercent)}%)`,
+          heap: `${Math.round(memoryUsage.heapUsed / 1024 / 1024)}MB`,
           pid: process.pid,
           nodeVersion: process.version,
         },

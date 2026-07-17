@@ -1,0 +1,8 @@
+node_modules
+src/widgets/node_modules
+src/widgets/.next
+dist
+.git
+.env
+*.log
+dashboard
