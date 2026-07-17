@@ -7,8 +7,9 @@
   "scripts": {
     "dev": "nitrostack-cli dev",
     "build": "nitrostack-cli build",
-    "start": "npm run build && nitrostack-cli start",
-    "start:prod": "nitrostack-cli start",
+    "start": "npm run build && npm run start:prod",
+    "start:prod": "MCP_TRANSPORT_TYPE=http node dist/index.js",
+    "start:cli": "nitrostack-cli start",
     "upgrade": "nitrostack-cli upgrade",
     "install:all": "nitrostack-cli install",
     "widget": "npm --prefix src/widgets",

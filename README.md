@@ -127,15 +127,25 @@ npm run verify:mcp     # 28 checks over the live HTTP endpoint (server must be r
 
 ### Deployment
 
-| Variable | Value | Why |
-|---|---|---|
-| `MCP_TRANSPORT_TYPE` | `http` | `NODE_ENV=production` alone yields `dual`, which **disables sessions** |
-| `HOST` | `0.0.0.0` | defaults to `localhost` — in a container that is a black hole |
-| `PORT` | `3000` | |
-| `NITROSTACK_APP_MODE` | `universal` | default is `openai`, which targets ChatGPT, not Claude |
-| `OAUTH_REQUIRED` | unset | auth off so a judge can connect; set `true` + a verifier to enforce |
+**No configuration is required.** No API keys, no external services, no `.env`. Push and deploy —
+`src/index.ts` applies every setting below on its own, and `.env` is gitignored so it never reaches
+the host.
 
-`index.ts` applies the first four automatically, but `.env` **overrides** them — check `.env` first.
+| Variable | Value | Why | Set by |
+|---|---|---|---|
+| `MCP_TRANSPORT_TYPE` | `http` | `NODE_ENV=production` alone yields `dual`, which **disables sessions** | `start:prod` |
+| `HOST` | `0.0.0.0` | defaults to `localhost` — in a container that is a black hole | `index.ts` |
+| `PORT` | platform's, else `3000` | | platform |
+| `NITROSTACK_APP_MODE` | `universal` | default `openai` targets ChatGPT, not Claude | `index.ts` |
+| `OAUTH_REQUIRED` | unset | auth off so a judge can connect; set `true` + a verifier to enforce | — |
+
+> ⚠️ **Never run `nitrostack-cli start` in production.** It reads the `--port` *flag* only
+> (`const port = options.port || '3000'`) and then **overrides `PORT` to 3000**, discarding the one
+> the platform assigned — so the server listens on 3000, the health check hits 8080, and the deploy
+> fails while the build log stays green. `npm start` / `start:prod` run `node dist/index.js`
+> directly and honour `PORT`. (`start:cli` keeps the CLI for local use.)
+
+If you do commit a `.env`, it **overrides** all of the above — check it first.
 
 **Budget ≥1GB RAM.** The Yosys WASM is ~54MB and is lazy-loaded on first use (preloaded in the
 background at boot so a judge's first call isn't the slow one). `assets/sky130.lib` (13MB) is

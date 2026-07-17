@@ -143,6 +143,17 @@ Every one of these is verified and will cost hours if forgotten.
   cannot fix a wrong value that is already set in `.env`. The starter ships
   `NITROSTACK_APP_MODE=openai` — change it in `.env`, not in code.
 
+**NitroStack — deployment**
+- **`nitrostack-cli start` HARD-OVERRIDES `PORT` to 3000 and ignores `process.env.PORT`.** The source
+  is `const port = options.port || '3000'` (the `--port` *flag*, never the env var), then it spawns
+  `node dist/index.js` with `PORT: port`. On a PaaS that assigns `PORT=8080` the server listens on
+  3000, the health check hits 8080, and **the deploy fails with a green build log.** Verified.
+  → **Production must run `node dist/index.js` directly.** `start:prod` does exactly that.
+- **`package.json` must be at the repo ROOT.** NitroCloud's build script only checks depth 0 and 1
+  (`[ -f package.json ]` / `[ -f */package.json ]`), and the unzipped archive is a `owner-repo-sha`
+  wrapper dir — so a project one level down is invisible and the deploy aborts. `npm ci` also needs
+  the real `package-lock.json` beside it, so a stub root package.json is not a fix.
+
 **NitroStack / build**
 - **`"moduleResolution": "bundler"`** in tsconfig. The shipped starter uses `"node"`, which *cannot*
   resolve `@yowasp/yosys` (exports-map only, no `main`). Certain breakage.
