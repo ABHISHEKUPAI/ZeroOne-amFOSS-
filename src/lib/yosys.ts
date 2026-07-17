@@ -93,8 +93,61 @@ export async function runYosysScript(script: string, files: Tree = {}): Promise<
         elapsedMs: Date.now() - started,
       };
     }
-    throw e;
+
+    // Not an Exit: the WASM itself trapped rather than the design being wrong. On a memory-capped
+    // host this surfaces as a bare "WebAssembly.RuntimeError"/"Aborted" with no hint of the cause,
+    // which is unactionable. Attach the real diagnosis.
+    throw new Error(diagnoseWasmFailure(e, chunks.join('')));
   }
+}
+
+/** Measured peak RSS of the full pipeline (elaborate -> sky130 synth -> BMC) on a real run. */
+export const PIPELINE_PEAK_RSS_MB = 670;
+
+/**
+ * Turn an opaque WASM trap into something a human can act on.
+ *
+ * Yosys-as-WASM allocates a large linear memory: a trivial elaborate already costs ~435MB RSS and
+ * sky130 synthesis ~640MB. A host capped at 512MB therefore kills it mid-run, and the only symptom
+ * is `WebAssembly.RuntimeError` / `Aborted` / `Out of memory` with no mention of memory limits at
+ * all. Nine times out of ten that error means "give the container more RAM", so say so.
+ */
+function diagnoseWasmFailure(e: unknown, log: string): string {
+  const raw = e instanceof Error ? `${e.name}: ${e.message}` : String(e);
+  let rss = 0;
+  try {
+    rss = Math.round(process.memoryUsage().rss / 1024 / 1024);
+  } catch {
+    /* memoryUsage() can itself fail under extreme pressure */
+  }
+
+  const looksLikeOom =
+    /memory|allocat|Aborted|RuntimeError|unreachable|table index is out of bounds/i.test(raw);
+
+  const lines = [
+    `Yosys WASM aborted — this is a TOOLCHAIN/HOST failure, not a problem with the submitted design.`,
+    ``,
+    `  cause: ${raw}`,
+    rss ? `  RSS at failure: ${rss} MB` : '',
+  ].filter(Boolean);
+
+  if (looksLikeOom) {
+    lines.push(
+      ``,
+      `MOST LIKELY: the host ran out of memory. Yosys compiled to WebAssembly needs far more RAM`,
+      `than its ~54MB on disk suggests — measured peaks on a real run:`,
+      `    elaborate        ~435 MB`,
+      `    sky130 synthesis ~640 MB   (also loads the 13MB liberty)`,
+      `    full pipeline    ~${PIPELINE_PEAK_RSS_MB} MB`,
+      `A container capped at 512MB dies here every time, reporting only an opaque WebAssembly error.`,
+      `FIX: give the deployment at least 1GB of RAM (2GB recommended).`,
+    );
+  }
+
+  const tail = log.trim().slice(-800);
+  if (tail) lines.push(``, `--- yosys log tail ---`, tail);
+
+  return lines.join('\n');
 }
 
 /** Read a text file out of a returned tree, tolerating Uint8Array vs string. */
