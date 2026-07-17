@@ -143,6 +143,24 @@ Every one of these is verified and will cost hours if forgotten.
   cannot fix a wrong value that is already set in `.env`. The starter ships
   `NITROSTACK_APP_MODE=openai` — change it in `.env`, not in code.
 
+**NitroStack — OAuth (this one silently blocks Claude connectors)**
+- **Importing `OAuthModule` AT ALL publishes `/.well-known/oauth-protected-resource`** — even with
+  `required:false`, and even though `/mcp` answers 200 without a token. Claude's *Add custom
+  connector* reads that metadata **first** and attempts OAuth 2.1 / DCR against whatever
+  `authorization_servers` names. The starter's placeholder (`https://mcplocal` +a dead Auth0 tenant)
+  makes that discovery fail, so **the connector cannot be added** — while the endpoint looks
+  perfectly healthy. See anthropics/claude-ai-mcp#402: there is no "unauthenticated" option in the
+  UI; a server declares that by **not publishing the metadata**. Only import `OAuthModule` when
+  `OAUTH_REQUIRED=true`.
+- **A configured OAuth also forces `transportType='dual'`** (`app-decorator.js`: `if (oauthConfig)
+  → 'dual'`), and dual **disables sessions**. Another reason to keep it out unless enforced.
+- **Benign-but-ugly:** with OAuth absent, DI still logs
+  `Failed to instantiate provider "class OAuthModule…": Cannot resolve token "OAUTH_CONFIG"` at
+  ERROR on every boot, dumping the whole class source. Core marks `OAuthModule` `@Injectable()` and
+  its index always loads it, so it self-registers; `instantiateAll` catches and continues. **Do not
+  "fix" it by providing a dummy `OAUTH_CONFIG`** — the constructor assigns the static config, and a
+  truthy `getConfig()` flips the transport to `dual`. Cosmetic log > broken sessions.
+
 **NitroStack — deployment**
 - **`nitrostack-cli start` HARD-OVERRIDES `PORT` to 3000 and ignores `process.env.PORT`.** The source
   is `const port = options.port || '3000'` (the `--port` *flag*, never the env var), then it spawns
