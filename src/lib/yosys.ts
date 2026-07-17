@@ -121,7 +121,13 @@ function diagnoseWasmFailure(e: unknown, log: string): string {
     /* memoryUsage() can itself fail under extreme pressure */
   }
 
+  // The WASM is built with WasmGC, so an old Node refuses to COMPILE it — nothing to do with the
+  // design, and nothing to do with memory. Check this first: it is the one failure whose message
+  // ("enable with --experimental-wasm-gc") actively misleads, because that flag cannot be applied.
+  const looksLikeOldNode = /noexternref|experimental-wasm-gc|invalid value type|CompileError/i.test(raw);
+
   const looksLikeOom =
+    !looksLikeOldNode &&
     /memory|allocat|Aborted|RuntimeError|unreachable|table index is out of bounds/i.test(raw);
 
   const lines = [
@@ -131,7 +137,21 @@ function diagnoseWasmFailure(e: unknown, log: string): string {
     rss ? `  RSS at failure: ${rss} MB` : '',
   ].filter(Boolean);
 
-  if (looksLikeOom) {
+  if (looksLikeOldNode) {
+    lines.push(
+      ``,
+      `CAUSE: this host runs Node ${process.versions.node}, which is too old.`,
+      `The EDA toolchain is WebAssembly compiled with WasmGC, enabled by default only from Node 22`,
+      `(V8 12.4). On older Node the module cannot even be compiled, so EVERY design tool fails here.`,
+      ``,
+      `Do NOT chase the "--experimental-wasm-gc" hint in the message above: Node 22+ rejects that`,
+      `flag outright ("bad option"), and NODE_OPTIONS refuses it, so it cannot be applied to this`,
+      `process at all.`,
+      ``,
+      `FIX: run this server on Node 22+. package.json declares engines.node >= 22; if the host`,
+      `ignores that, pin the runtime in the platform's settings (or via .nvmrc).`,
+    );
+  } else if (looksLikeOom) {
     lines.push(
       ``,
       `MOST LIKELY: the host ran out of memory. Yosys compiled to WebAssembly needs far more RAM`,

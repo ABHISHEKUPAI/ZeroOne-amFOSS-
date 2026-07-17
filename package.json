@@ -29,6 +29,9 @@
     "@types/node": "^22.10.0",
     "typescript": "^5.3.3"
   },
+  "engines": {
+    "node": ">=22"
+  },
   "author": "saharsh",
   "nitrostack": {
     "skillsVersion": "1.0.0"
