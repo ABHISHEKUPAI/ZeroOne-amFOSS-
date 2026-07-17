@@ -12,6 +12,9 @@ import {
   TT_TILE_UM2,
   type AssertionResult,
   type CostResult,
+  type NetlistGraph,
+  type GraphNode,
+  type GraphEdge,
   type PnrResult,
   type RtlArtifact,
   type RtlModule,
@@ -154,6 +157,28 @@ async function listAsserts(
   }
 }
 
+/**
+ * Strip Yosys's AST debug vomit from a log.
+ *
+ * On certain elaboration errors (e.g. a hierarchical reference to a signal that doesn't exist)
+ * Yosys dumps the ENTIRE parsed AST — thousands of `verilog-ast>` / `AST_*` lines — around the one
+ * line that matters. Left in, it buries the actionable error under 30KB of noise and makes both the
+ * tool result and the report unreadable. Keep everything that isn't AST dump.
+ */
+function cleanYosysLog(log: string): string {
+  return log
+    .split('\n')
+    .filter((l) => !/^\s*(verilog-ast>|AST_[A-Z]|\[0x[0-9a-f]+\])/.test(l))
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+/** The first real, actionable error line, with the noise removed. */
+function firstError(log: string): string | null {
+  return cleanYosysLog(log).match(/^.*ERROR:.*$/m)?.[0]?.trim() ?? null;
+}
+
 /** Yosys has no Verific in the open-source build, so concurrent SVA is a syntax error. */
 const SVA_HINT =
   'NOTE: `assert property (@(posedge clk) ...)` (concurrent SVA) is NOT supported by this Yosys ' +
@@ -179,7 +204,7 @@ export async function verifyDesign(
   onProgress?: (msg: string) => void,
 ): Promise<VerificationResult> {
   const started = Date.now();
-  const fail = (log: string): VerificationResult => ({
+  const fail = (log: string, compileError: string | null = null): VerificationResult => ({
     ok: false,
     method: 'bmc-sat',
     depth,
@@ -187,6 +212,7 @@ export async function verifyDesign(
     assertions: [],
     counterexample: [],
     trace: null,
+    compileError,
     log,
     elapsedMs: Date.now() - started,
     ranAt: new Date().toISOString(),
@@ -197,10 +223,11 @@ export async function verifyDesign(
 
   // The testbench does not compile. Say that — do not call it "no assertions".
   if (!listed.ok) {
-    const err = listed.log.match(/ERROR:[^\n]*/)?.[0] ?? 'unknown error';
+    const err = firstError(listed.log) ?? 'unknown compile error';
     return fail(
       `The design or testbench failed to compile, so no proof was attempted.\n\n${err}\n\n${SVA_HINT}\n\n` +
-        `--- full log ---\n${tail(listed.log, 2500)}`,
+        `--- log ---\n${tail(cleanYosysLog(listed.log), 2000)}`,
+      err,
     );
   }
 
@@ -235,6 +262,7 @@ sat -verify -prove-asserts -seq ${depth} -show-all ${top}`,
       counterexample: [],
       // Proved: the solver found NO model. There is no counterexample, so there is no waveform.
       trace: null,
+      compileError: null,
       log: tail(all.log, 3000),
       elapsedMs: Date.now() - started,
       ranAt: new Date().toISOString(),
@@ -253,7 +281,8 @@ sat -verify -prove-asserts -seq ${depth} -show-all ${top}`,
         assertions: [],
         counterexample: [],
         trace: null,
-        log: tail(all.log, 4000),
+        compileError: null,
+        log: tail(cleanYosysLog(all.log), 4000),
         elapsedMs: Date.now() - started,
         ranAt: new Date().toISOString(),
       };
@@ -297,7 +326,8 @@ sat -verify -prove-asserts -seq ${depth} -show-all ${top}`,
     assertions: results,
     counterexample: cxLines,
     trace,
-    log: tail(all.log, 4000),
+    compileError: null,
+    log: tail(cleanYosysLog(all.log), 4000),
     elapsedMs: Date.now() - started,
     ranAt: new Date().toISOString(),
   };
@@ -519,6 +549,148 @@ stat -top ${top} -json
     elapsedMs: Date.now() - started,
     ranAt: new Date().toISOString(),
   };
+}
+
+// --- netlist graph -------------------------------------------------------------------------
+
+interface JsonCellFull {
+  type: string;
+  port_directions?: Record<string, 'input' | 'output' | 'inout'>;
+  connections?: Record<string, Array<number | string>>;
+  attributes?: Record<string, string>;
+}
+interface JsonPortFull {
+  direction: 'input' | 'output' | 'inout';
+  bits: Array<number | string>;
+}
+
+const MAX_GRAPH_NODES = 400;
+
+/** sky130_fd_sc_hd output pins. Liberty cells carry no port_directions in write_json output. */
+const SKY130_OUTPUTS = new Set(['X', 'Y', 'Q', 'Q_N', 'CO', 'COUT', 'SUM', 'HI', 'LO', 'CO_N']);
+
+/**
+ * Port directions for a cell. Generic ($-prefixed) cells carry `port_directions`; mapped sky130
+ * standard cells do NOT (Yosys leaves them to the liberty), so infer them from the pin name.
+ */
+function cellPortDirections(c: JsonCellFull): Record<string, 'input' | 'output' | 'inout'> {
+  if (c.port_directions && Object.keys(c.port_directions).length) return c.port_directions;
+  const out: Record<string, 'input' | 'output' | 'inout'> = {};
+  for (const pn of Object.keys(c.connections ?? {})) {
+    out[pn] = SKY130_OUTPUTS.has(pn) ? 'output' : 'input';
+  }
+  return out;
+}
+
+/**
+ * Extract the design's netlist as a node/edge graph for visualisation.
+ *
+ * Nets in Yosys JSON are integer BIT IDS; two ports are connected when they share a bit. The
+ * strings "0"/"1"/"x"/"z" are constants, not nets, and are ignored. A module INPUT port is a driver
+ * into the design; a module OUTPUT port is a consumer.
+ *
+ * `level:'rtl'` gives ~10-30 generic cells ($add/$dff/$mux) — one node per RTL construct, readable.
+ * `level:'gate'` gives the mapped sky130 standard cells (~100+).
+ */
+export async function netlistGraph(
+  files: Record<string, string>,
+  top: string,
+  level: 'rtl' | 'gate',
+): Promise<NetlistGraph> {
+  const vfs: Record<string, string | Uint8Array> = { ...files };
+  let script: string;
+  if (level === 'gate') {
+    vfs[LIB_NAME] = await sky130Lib();
+    script = `
+read_verilog -sv ${fileList(files)}
+synth -top ${top}
+dfflibmap -liberty ${LIB_NAME}
+abc -liberty ${LIB_NAME}
+opt_clean
+write_json g.json
+`;
+  } else {
+    script = `
+read_verilog -sv ${fileList(files)}
+hierarchy -check -top ${top}
+proc
+opt
+write_json g.json
+`;
+  }
+
+  const r = await runYosysScript(script, vfs);
+  const raw = readTreeFile(r.files, 'g.json');
+  if (!raw) return { top, level, nodes: [], edges: [], truncated: false };
+
+  const design = JSON.parse(raw) as { modules?: Record<string, { ports?: Record<string, JsonPortFull>; cells?: Record<string, JsonCellFull> }> };
+  const mod = design.modules?.[`\\${top}`] ?? design.modules?.[top] ?? Object.values(design.modules ?? {})[0];
+  if (!mod) return { top, level, nodes: [], edges: [], truncated: false };
+
+  const nodes: GraphNode[] = [];
+  // driver[bit] = the single (node, port) that drives it; consumers[bit] = every input reading it.
+  const drivers = new Map<number, { node: string; port: string }>();
+  const consumers = new Map<number, Array<{ node: string; port: string }>>();
+  const addConsumer = (bit: number, ref: { node: string; port: string }) => {
+    const list = consumers.get(bit) ?? [];
+    list.push(ref);
+    consumers.set(bit, list);
+  };
+  const realBits = (arr: Array<number | string> = []) =>
+    arr.filter((b): b is number => typeof b === 'number');
+
+  // Module ports. An input port drives the design; an output port consumes.
+  for (const [pn, p] of Object.entries(mod.ports ?? {})) {
+    const id = `port:${clean(pn)}`;
+    nodes.push({
+      id,
+      kind: 'port',
+      type: p.direction,
+      src: null,
+      ports: [{ name: clean(pn), direction: p.direction, width: p.bits.length }],
+    });
+    for (const bit of realBits(p.bits)) {
+      if (p.direction === 'input') drivers.set(bit, { node: id, port: clean(pn) });
+      else addConsumer(bit, { node: id, port: clean(pn) });
+    }
+  }
+
+  // Cells. Cap for readability — but say so rather than dropping silently.
+  const cellEntries = Object.entries(mod.cells ?? {});
+  const truncated = cellEntries.length > MAX_GRAPH_NODES;
+  for (const [cn, c] of cellEntries.slice(0, MAX_GRAPH_NODES)) {
+    const id = clean(cn);
+    const dirs = cellPortDirections(c);
+    const cellPorts = Object.entries(dirs).map(([pn, dir]) => ({
+      name: pn,
+      direction: dir,
+      width: (c.connections?.[pn] ?? []).length,
+    }));
+    nodes.push({ id, kind: 'cell', type: c.type, src: c.attributes?.src ?? null, ports: cellPorts });
+
+    for (const [pn, dir] of Object.entries(dirs)) {
+      for (const bit of realBits(c.connections?.[pn])) {
+        if (dir === 'output') drivers.set(bit, { node: id, port: pn });
+        else addConsumer(bit, { node: id, port: pn });
+      }
+    }
+  }
+
+  // One edge per driver->consumer pair, width = shared bit count.
+  const edgeMap = new Map<string, GraphEdge>();
+  for (const [bit, cons] of consumers) {
+    const drv = drivers.get(bit);
+    if (!drv) continue;
+    for (const con of cons) {
+      if (drv.node === con.node) continue;
+      const key = `${drv.node}.${drv.port}->${con.node}.${con.port}`;
+      const existing = edgeMap.get(key);
+      if (existing) existing.width++;
+      else edgeMap.set(key, { id: key, from: drv, to: con, width: 1 });
+    }
+  }
+
+  return { top, level, nodes, edges: [...edgeMap.values()], truncated };
 }
 
 // --- place & route -------------------------------------------------------------------------

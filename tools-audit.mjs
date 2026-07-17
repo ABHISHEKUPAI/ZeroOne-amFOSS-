@@ -118,9 +118,16 @@ ok('kind="all" has all 5 sections', sections.every((x) => md.includes(x)), `${md
 ok('structured data for the dashboard', all.design && 'area_um2' in all.design && 'assertions' in all.design,
   `keys: ${Object.keys(all.design || {}).join(',')}`);
 
-console.log('\n── 8/8 list_designs ──');
+console.log('\n── netlist_graph (chip viz) ──');
+const ng=await call('netlist_graph',{design_id:did,level:'rtl'});
+ok('rtl graph nodes+edges', ng.node_count>0 && ng.edge_count>0, `${ng.node_count} nodes, ${ng.edge_count} edges`);
+ok('cells carry src', ng.nodes.filter(n=>n.kind==='cell'&&n.src).length>0, ng.nodes.filter(n=>n.kind==='cell'&&n.src).length+' clickable to source');
+const ngg=await call('netlist_graph',{design_id:did,level:'gate'});
+ok('gate graph edges', ngg.edge_count>0, `${ngg.node_count} nodes, ${ngg.edge_count} edges`);
+
+console.log('\n── list_designs ──');
 const l = await call('list_designs', {});
 ok('lists designs', l.count > 0, `${l.count} design(s)`);
 
-console.log(`\n${fail === 0 ? '✅ ALL 8 TOOLS WORK' : `❌ ${fail} CHECK(S) FAILED`}`);
+console.log(`\n${fail === 0 ? '✅ ALL TOOLS WORK' : `❌ ${fail} CHECK(S) FAILED`}`);
 process.exit(fail ? 1 : 0);

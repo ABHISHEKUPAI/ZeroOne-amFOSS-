@@ -95,7 +95,7 @@ check('session established', !!session, session?.slice(0, 8));
 await fetch(URL_, { method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream', 'Mcp-Session-Id': session }, body: JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }) });
 
 const tools = (await rpc('tools/list', {})).tools;
-check('tools listed', tools.length === 8, tools.map((t) => t.name).join(', '));
+check('tools listed', tools.length === 9, tools.map((t) => t.name).join(', '));
 const res = (await rpc('resources/list', {})).resources;
 check('resources listed', res.length >= 4, res.map((r) => r.uri).join(', '));
 const prompts = (await rpc('prompts/list', {})).prompts;

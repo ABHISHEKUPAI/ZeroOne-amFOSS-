@@ -88,6 +88,20 @@ export function verificationReport(s: DesignSession): string {
   );
   L.push('');
 
+  // A compile failure and a genuinely un-asserted testbench are different problems with different
+  // fixes. Say which one this is.
+  if (v.compileError) {
+    L.push('### Did not compile', '');
+    L.push('The testbench (or the design it instantiates) failed to elaborate, so no proof ran.', '');
+    L.push('```', v.compileError, '```', '');
+    L.push(
+      '> Common causes: a hierarchical reference to a signal that does not exist in the DUT ' +
+        '(`uut.some_internal`), concurrent SVA (`assert property` — unsupported here), or a plain ' +
+        'syntax error. Fix the testbench and re-run `simulate`.',
+    );
+    return L.join('\n');
+  }
+
   if (!v.assertions.length) {
     L.push('### No assertions', '', '```', v.log.slice(-1200), '```', '');
     L.push(

@@ -15,7 +15,14 @@ import {
   z,
   type ExecutionContext,
 } from '@nitrostack/core';
-import { computeCost, elaborate, placeAndRoute, synthesize, verifyDesign } from '../../lib/eda.js';
+import {
+  computeCost,
+  elaborate,
+  netlistGraph,
+  placeAndRoute,
+  synthesize,
+  verifyDesign,
+} from '../../lib/eda.js';
 import { SessionStore } from '../../lib/session.store.js';
 import { renderReport, REPORT_KINDS, type ReportKind } from '../../lib/reports.js';
 import type { IpCandidate, Target } from '../../lib/types.js';
@@ -266,14 +273,22 @@ export class SiliconTools {
       // Structured per-cycle trace for waveform rendering. NON-NULL ONLY ON FAILURE: a proved
       // design has no counterexample, and inventing one would be a lie.
       trace: result.trace,
+      // Set only when the testbench/design did not compile — the single actionable error, cleaned
+      // of Yosys's AST dump. Distinct from a genuine assertion failure.
+      compile_error: result.compileError ?? undefined,
       counterexample: result.counterexample.slice(0, 40),
       log: result.ok ? undefined : result.log,
       next_step: result.ok
         ? 'All assertions proved. Call synthesize to map the design to real cells.'
-        : failed.length
-          ? `Assertion(s) violated: ${failed.map((f) => `${f.cell} at ${f.src ?? '?'}`).join(', ')}. ` +
-            'Read the counterexample, fix the RTL, and call write_rtl with the same design_id.'
-          : 'Verification did not produce a proof. Read log.',
+        : result.compileError
+          ? `The testbench did not compile: ${result.compileError} — this is a TESTBENCH bug, not a ` +
+            'proof failure. Common cause: a hierarchical reference to a signal that does not exist in ' +
+            'the DUT (e.g. uut.transmitting). Assert only on the DUT PORTS, or on signals you declare ' +
+            'in the testbench. Fix the testbench and call simulate again (same design_id).'
+          : failed.length
+            ? `Assertion(s) violated: ${failed.map((f) => `${f.cell} at ${f.src ?? '?'}`).join(', ')}. ` +
+              'Read the counterexample, fix the RTL, and call write_rtl with the same design_id.'
+            : 'Verification did not produce a proof. Read log.',
       report: renderReport(session, 'verification'),
     };
   }
@@ -400,6 +415,48 @@ export class SiliconTools {
       utilization: result.utilization,
       log: result.fmaxMhz == null ? result.log : undefined,
       report: renderReport(session, 'summary'),
+    };
+  }
+
+  // --- netlist graph (chip visualisation) -------------------------------------------------
+
+  @Tool({
+    name: 'netlist_graph',
+    title: 'Netlist graph for visualisation',
+    description:
+      "Return the design's netlist as a node/edge graph for a schematic/chip visualisation. " +
+      "level 'rtl' gives ~10-30 generic cells ($add/$dff/$mux) — one node per RTL construct, " +
+      "readable. level 'gate' gives the mapped sky130 standard cells (~100+). Every cell node " +
+      'carries `src` (file:line) for click-to-source. Edges are real bit-level nets between ports.',
+    inputSchema: z.object({
+      design_id: z.string(),
+      level: z
+        .enum(['rtl', 'gate'])
+        .default('rtl')
+        .describe("'rtl' = generic cells (readable); 'gate' = mapped sky130 standard cells"),
+    }),
+    annotations: { readOnlyHint: true },
+    taskSupport: 'optional',
+    invocation: { invoking: 'Extracting netlist...', invoked: 'Netlist graph ready' },
+  })
+  async netlistGraphTool(input: { design_id: string; level: 'rtl' | 'gate' }, ctx: ExecutionContext) {
+    const session = this.store.require(input.design_id);
+    if (!session.rtl?.elaborated)
+      throw new Error(`Design "${session.id}" has no elaborated RTL. Call write_rtl first.`);
+
+    const g = await netlistGraph(session.rtl.files, session.rtl.top, input.level);
+    ctx.logger.info(`netlist_graph ${session.id} ${input.level}: ${g.nodes.length} nodes, ${g.edges.length} edges`);
+
+    return {
+      ok: true,
+      design_id: session.id,
+      top: g.top,
+      level: g.level,
+      node_count: g.nodes.length,
+      edge_count: g.edges.length,
+      truncated: g.truncated,
+      nodes: g.nodes,
+      edges: g.edges,
     };
   }
 

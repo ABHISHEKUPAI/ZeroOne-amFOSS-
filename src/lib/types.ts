@@ -74,6 +74,12 @@ export interface VerificationResult {
   counterexample: string[];
   /** structured form of the counterexample. NULL when the proof succeeds — no violation exists. */
   trace: Waveform | null;
+  /**
+   * When the design/testbench did not COMPILE, the single actionable error line (noise stripped).
+   * Distinguishes "your testbench is broken" from "your testbench has no assertions" — very
+   * different fixes. Null when compilation succeeded.
+   */
+  compileError: string | null;
   log: string;
   elapsedMs: number;
   ranAt: string;
@@ -125,6 +131,33 @@ export interface CostResult {
   };
   source: string;
   ranAt: string;
+}
+
+export interface GraphNode {
+  /** cell name, or 'port:<name>' for a module port */
+  id: string;
+  kind: 'cell' | 'port';
+  /** '$add' | '$dff' | 'sky130_fd_sc_hd__dfxtp_1' | 'input' | 'output' */
+  type: string;
+  /** file:line span for click-to-source; null for module ports */
+  src: string | null;
+  ports: Array<{ name: string; direction: 'input' | 'output' | 'inout'; width: number }>;
+}
+
+export interface GraphEdge {
+  id: string;
+  from: { node: string; port: string };
+  to: { node: string; port: string };
+  width: number;
+}
+
+export interface NetlistGraph {
+  top: string;
+  level: 'rtl' | 'gate';
+  nodes: GraphNode[];
+  edges: GraphEdge[];
+  /** true if the node count was capped — never silently drop */
+  truncated: boolean;
 }
 
 export interface IpCandidate {
