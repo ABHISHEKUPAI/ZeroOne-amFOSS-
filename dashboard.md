@@ -493,3 +493,100 @@ ACCEPTANCE: readable left-to-right graph; ports on correct sides; clicking a nod
 - [ ] `cost_sheet` errors surface as errors, not as `€0`
 - [ ] `OPENAI_API_KEY` never appears in a client bundle
 - [ ] Every number on screen traces to a tool call in the ToolStream
+
+---
+
+# ADDENDUM — new server capabilities (2026-07-17)
+
+Three server changes landed. Feed these to OpenCode as additional parts.
+
+## New: `netlist_graph` tool (chip visualisation is now real)
+
+The server exposes a **9th tool**. Verified shapes:
+
+```
+netlist_graph(design_id*:string, level?:"rtl"|"gate" ="rtl")
+```
+```jsonc
+{ "ok": true, "top": "uart_tx", "level": "rtl",
+  "node_count": 50, "edge_count": 105, "truncated": false,
+  "nodes": [
+    { "id": "$add$uart.v:8$3", "kind": "cell", "type": "$add",
+      "src": "uart.v:8.30-8.33",
+      "ports": [ { "name": "A", "direction": "input",  "width": 16 },
+                 { "name": "Y", "direction": "output", "width": 16 } ] },
+    { "id": "port:clk", "kind": "port", "type": "input", "src": null,
+      "ports": [ { "name": "clk", "direction": "input", "width": 1 } ] }
+  ],
+  "edges": [
+    { "id": "$add..Y->port:q.q", "from": { "node": "$add..", "port": "Y" },
+      "to": { "node": "port:q", "port": "q" }, "width": 4 } ] }
+```
+Facts: `level:'rtl'` → ~10-50 readable generic cells (`$add`/`$dff`/`$mux`), `level:'gate'` → mapped
+sky130 cells (100+). `kind:'port'` nodes are module ports. `src` is `null` for ports **and** for
+Yosys-inserted cells (honest — those aren't clickable). Edges carry `width`. `truncated:true` when
+capped at 400 nodes.
+
+### PROMPT — netlist graph panel (this is DASHBOARD_BUILD Part 6, now unblocked)
+```
+Add components/NetlistGraph.tsx to the centre region. reactflow + elkjs (add both deps).
+Data: call the MCP tool netlist_graph({design_id, level}). Shape is in the ADDENDUM above.
+
+- Custom node (XOD-style), NOT reactflow's default:
+    body var(--panel-2), 1px var(--border), radius 4; title = node.type in mono 11px;
+    INPUT ports (direction 'input') as 7px circles on the LEFT, OUTPUT ports on the RIGHT, labelled;
+    width>1 shown as a small superscript. kind==='port' nodes render as var(--accent) pills.
+- Layout with elkjs 'layered', elk.direction 'RIGHT', spacing.nodeNode 40. Positions from elk ONLY.
+- Edges bezier 1px var(--fg-faint); width>1 -> 2px.
+- Click a node with a non-null src ('uart.v:8.30-8.33' -> line 8) -> RtlEditor reveals that line.
+- Hover -> highlight that node's edges, dim others to 25%.
+- A 'rtl | gate' toggle re-fetches with the other level.
+- truncated:true -> chip "showing first 400 of N". Never silently drop.
+- Empty state: <NotRun hint="run write_rtl first" />.
+
+DO NOT invent nodes/ports/edges — render exactly what the tool returns. Positions from elk only.
+ACCEPTANCE: UART rtl level -> readable left-to-right graph, ports on correct sides, clicking a
+$add/$dff node jumps the editor to its line; toggling to gate shows sky130 cells.
+```
+
+## Changed: `simulate` now returns `compile_error`
+
+When the testbench/design does not COMPILE (vs. a real assertion failure), the result carries a
+clean one-line `compile_error` and `trace` is null. The 30KB Yosys AST dump is gone.
+
+```jsonc
+{ "ok": false, "compile_error": "tb.v:5: ERROR: Don't know how to detect sign and width ...",
+  "trace": null, "assertions": [],
+  "next_step": "The testbench did not compile: ... — this is a TESTBENCH bug, not a proof failure ..." }
+```
+
+### PROMPT — handle compile errors distinctly
+```
+In components/AnalyzerTable.tsx / the verify panel:
+- If simulate result has compile_error (non-null): render a distinct "Did not compile" state —
+  the compile_error string in a mono block, amber (var(--run)) not red, with the note
+  "testbench bug, not a proof failure". Do NOT render the assertions table or waveform.
+- This is DIFFERENT from a proof failure (assertions with status:'failed' + a trace) and from
+  a proved pass (trace null, ok true -> "no counterexample exists"). Three distinct states.
+```
+
+## Feature: download reports
+
+`design_report({kind:'all'})` already returns full markdown in `.report`. Pure client feature.
+
+### PROMPT — download report
+```
+In components/ReportView.tsx add a "Download .md" button:
+- const blob = new Blob([design.report ?? ''], {type:'text/markdown'})
+- trigger a download named `${designId}-report.md` via a temporary <a download>.
+Also add "Copy" (navigator.clipboard.writeText). Both no-ops (disabled) when no report yet.
+Optional: a "Download .json" of the full design object (design_report's `design` field) for the
+raw numbers.
+```
+
+## Reminder — the loop must feed results back
+
+If write_rtl or simulate returns ok:false, that is the INPUT to self-correction, not a stop. The
+agent loop (route.ts) MUST append the tool result and call the model again, up to the 24 cap. gpt-4o
+writes weaker Verilog than Claude (undefined params, hierarchical refs into the DUT), so expect
+2-4 repair rounds per design. Do not lower the iteration cap.
