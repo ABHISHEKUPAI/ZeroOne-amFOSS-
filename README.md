@@ -75,7 +75,7 @@ module tb (input clk, input tx_start, input [7:0] tx_data);
 endmodule
 ```
 
-Three rules, each learned the hard way (see `../CLAUDE.md`):
+Three rules, each learned the hard way (see `CLAUDE.md`):
 
 - **No concurrent SVA.** `assert property (@(posedge clk) a |-> b)` is a **syntax error** — SVA needs
   Verific, which the open-source Yosys does not ship. Use immediate `assert` in an `always` block;
@@ -156,6 +156,6 @@ src/
 assets/sky130.lib     # vendored liberty, 13MB, 428 cells with real area
 ```
 
-`../CLAUDE.md` holds the verified API contracts and landmines; `../log.md` holds the decisions and
+`CLAUDE.md` holds the verified API contracts and landmines; `log.md` holds the decisions and
 why. **Read both before changing a Yosys script** — most of the pass ordering looks arbitrary and is
 not.
