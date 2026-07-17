@@ -1,0 +1,67 @@
+{
+  "version": "1.0.0",
+  "widgets": [
+    {
+      "uri": "/design-report",
+      "name": "Design Report",
+      "description": "Engineering report for a hardware design: verification verdict, assertions with source locations, area, part fit, achieved Fmax and fabrication cost. Renders partial designs — stages that have not run are shown as 'not run' rather than estimated.",
+      "examples": [
+        {
+          "name": "Verified UART, costed",
+          "description": "A UART transmitter that passed bounded model checking, synthesized to sky130 and costed",
+          "data": {
+            "ok": true,
+            "design_id": "design-1-a4f2x",
+            "next_step": "All assertions proved. Call synthesize to map the design to real cells.",
+            "design": {
+              "spec": "UART transmitter, 115200 baud, 8N1",
+              "target": "sky130",
+              "top": "uart_tx",
+              "verified": true,
+              "assertions": [
+                { "cell": "a_idle_high", "src": "tb.v:14.5-14.42", "status": "proved", "failedAtStep": null },
+                { "cell": "a_start_bit_low", "src": "tb.v:15.5-15.48", "status": "proved", "failedAtStep": null }
+              ],
+              "area_um2": 1204.16,
+              "cell_count": 128,
+              "utilization": null,
+              "fmax_mhz": null,
+              "cost_eur": 14.65,
+              "tiles": 1,
+              "history": []
+            }
+          }
+        },
+        {
+          "name": "Failed verification",
+          "description": "A design whose assertion was violated, with the failing source location and counterexample",
+          "data": {
+            "ok": false,
+            "design_id": "design-2-b9k1z",
+            "next_step": "Assertion(s) violated: a_idle_high at tb.v:14.5-14.42. Read the counterexample, fix the RTL, and call write_rtl with the same design_id.",
+            "counterexample": ["Signal Name  Dec Hex Bin", "  12  $assert$tb.v:14$5_EN   0   0   0"],
+            "design": {
+              "spec": "UART transmitter, 115200 baud, 8N1",
+              "target": "sky130",
+              "top": "uart_tx",
+              "verified": false,
+              "assertions": [
+                { "cell": "a_idle_high", "src": "tb.v:14.5-14.42", "status": "failed", "failedAtStep": 12 },
+                { "cell": "a_start_bit_low", "src": "tb.v:15.5-15.48", "status": "proved", "failedAtStep": null }
+              ],
+              "area_um2": null,
+              "cell_count": null,
+              "utilization": null,
+              "fmax_mhz": null,
+              "cost_eur": null,
+              "tiles": null,
+              "history": []
+            }
+          }
+        }
+      ],
+      "tags": ["hardware", "rtl", "verification", "synthesis", "cost", "eda"]
+    }
+  ],
+  "generatedAt": "2026-07-17T00:00:00.000Z"
+}

@@ -1,0 +1,18 @@
+# Secrets — NEVER commit. The hackathon repo is public.
+.env
+.env.*
+!.env.example
+
+# Build output
+dist/
+src/widgets/.next/
+src/widgets/out/
+
+# Dependencies
+node_modules/
+src/widgets/node_modules/
+
+# Logs / OS
+*.log
+npm-debug.log*
+.DS_Store
