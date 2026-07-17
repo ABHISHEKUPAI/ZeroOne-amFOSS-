@@ -14,6 +14,7 @@
     "install:all": "nitrostack-cli install",
     "widget": "npm --prefix src/widgets",
     "verify": "npm run build && node e2e.mjs",
+    "verify:tools": "node tools-audit.mjs",
     "verify:mcp": "node mcp-e2e.mjs"
   },
   "dependencies": {
