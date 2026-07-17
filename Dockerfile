@@ -1,18 +1,9 @@
-# Node 22 is a HARD requirement, not a preference.
-#
-# The EDA toolchain (@yowasp/yosys) is WebAssembly compiled with WasmGC. Proven by testing the real
-# binary in each runtime:
-#   node:20  ->  CompileError: invalid value type 'noexternref'      (every tool call dies)
-#   node:20 --experimental-wasm-gc
-#            ->  CompileError: Invalid opcode 0x1f                   (V8 11.3 lacks the final
-#                                                                     WasmGC opcodes — the flag
-#                                                                     does NOT rescue Node 20)
-#   node:22  ->  OK
-#   node:24  ->  OK
-# There is no code-level workaround. The runtime must be 22+.
-#
-# package.json declares engines.node >= 22, but NitroCloud ignored it and provisioned Node 20.20.2.
-# This Dockerfile removes the platform's choice from the equation.
+# The toolchain is pinned to PRE-WasmGC WASM builds (@yowasp/yosys 0.64.1130,
+# @yowasp/nextpnr-ecp5 0.10.752), so it runs on Node 18+ — including NitroCloud's Node 20, verified
+# by building this repo on node:20-slim and passing all 8 tools. node:22 is used here only because
+# it is the current LTS; 20 also works. This Dockerfile is belt-and-suspenders for platforms that
+# honour it — the real portability comes from the version pin, not from forcing a runtime.
+# See src/index.ts for why the newer WasmGC builds could not be used on Node 20.
 FROM node:22-slim
 
 WORKDIR /app

@@ -13,32 +13,26 @@ import { McpApplicationFactory } from '@nitrostack/core';
 import { AppModule } from './app.module.js';
 import { preloadYosys } from './lib/yosys.js';
 
-/** WasmGC (used by the YoWASP binaries) is enabled by default from Node 22 / V8 12.4 onward. */
-const MIN_NODE_MAJOR = 22;
-
 /**
- * Fail loudly at boot on an unsupported Node, instead of at the first tool call.
+ * NitroStack core's floor. The YoWASP binaries are pinned to their last PRE-WasmGC builds
+ * (@yowasp/yosys 0.64.1130, @yowasp/nextpnr-ecp5 0.10.752), which run on Node 18+.
  *
- * The YoWASP Yosys binary is compiled with WasmGC. On Node 20 it does not merely run slowly — it
- * refuses to compile:
- *   CompileError: WebAssembly.compileStreaming(): invalid value type 'noexternref',
- *                 enable with --experimental-wasm-gc
- * There is no workaround from inside the process: `--experimental-wasm-gc` is rejected outright by
- * Node 22+ ("bad option") and is on NODE_OPTIONS' disallow list, so it cannot be set for the
- * current process either. The only fix is a newer Node, which is why package.json pins
- * engines.node >= 22. If a host ignores `engines`, this warning is the fastest path to diagnosis.
+ * History worth keeping: the newer WasmGC builds (yosys >= 0.65) refuse to compile on Node 20 with
+ * `invalid value type 'noexternref'`, and the `--experimental-wasm-gc` flag does NOT rescue Node 20
+ * (V8 11.3 lacks the final WasmGC opcodes). NitroCloud provisions Node 20 and ignores engines,
+ * .nvmrc, and the Dockerfile — so the durable fix was to pin the toolchain below the WasmGC line,
+ * not to chase the runtime. Do not bump these WASM deps to a 0.65+/0.11+ build without re-pinning
+ * Node, or the deploy breaks again.
  */
+const MIN_NODE_MAJOR = 18;
+
+/** Warn (do not block) below the floor. */
 function checkNodeVersion() {
   const major = Number(process.versions.node.split('.')[0]);
   if (Number.isFinite(major) && major < MIN_NODE_MAJOR) {
     console.error(
-      `\n⛔ Node ${process.versions.node} is too old — Yosys will fail to compile.\n` +
-        `   The EDA toolchain is WebAssembly built with WasmGC, which needs Node >= ${MIN_NODE_MAJOR}.\n` +
-        `   On this version every tool call dies with:\n` +
-        `     CompileError: invalid value type 'noexternref', enable with --experimental-wasm-gc\n` +
-        `   The flag cannot be applied from here (Node 22+ rejects it; NODE_OPTIONS forbids it).\n` +
-        `   FIX: run this server on Node ${MIN_NODE_MAJOR}+ (package.json declares engines.node >= ${MIN_NODE_MAJOR}).\n` +
-        `   The server will start, but no design tool will work.\n`,
+      `\n⚠️  Node ${process.versions.node} is below the supported floor (>= ${MIN_NODE_MAJOR}). ` +
+        `The toolchain may misbehave.\n`,
     );
   }
 }

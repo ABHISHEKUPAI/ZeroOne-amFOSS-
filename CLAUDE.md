@@ -172,6 +172,17 @@ Every one of these is verified and will cost hours if forgotten.
   wrapper dir — so a project one level down is invisible and the deploy aborts. `npm ci` also needs
   the real `package-lock.json` beside it, so a stub root package.json is not a fix.
 
+**YoWASP — version pin (do not bump blindly)**
+- **`@yowasp/yosys` is pinned to `0.64.1130`, `@yowasp/nextpnr-ecp5` to `0.10.752` — the last
+  PRE-WasmGC builds.** From yosys **0.65** / nextpnr **0.11** the binaries use WasmGC, which
+  **does not compile on Node 20**: `invalid value type 'noexternref'`. The `--experimental-wasm-gc`
+  flag does NOT rescue Node 20 (V8 11.3 lacks the final opcodes → `Invalid opcode 0x1f`), and Node
+  22+ rejects the flag outright. **NitroCloud provisions Node 20 and ignores `engines`, `.nvmrc`,
+  and the Dockerfile**, so the toolchain had to drop below the WasmGC line. Verified: full server
+  builds on `node:20-slim` and passes all 8 tools. **Bumping these two deps to 0.65+/0.11+ re-breaks
+  the deploy** unless the runtime is also forced to 22+. Both are still Yosys **0.64** / nextpnr, so
+  every pass, `sat`, `chformal`, and area number is unchanged.
+
 **NitroStack / build**
 - **`"moduleResolution": "bundler"`** in tsconfig. The shipped starter uses `"node"`, which *cannot*
   resolve `@yowasp/yosys` (exports-map only, no `main`). Certain breakage.
