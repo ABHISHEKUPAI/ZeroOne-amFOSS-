@@ -138,6 +138,8 @@ the host.
 | `PORT` | platform's, else `3000` | | platform |
 | `NITROSTACK_APP_MODE` | `universal` | default `openai` targets ChatGPT, not Claude | `index.ts` |
 | `OAUTH_REQUIRED` | unset | auth off so a judge can connect; set `true` + a verifier to enforce | — |
+| `MCP_SESSION_TIMEOUT_MS` | `7200000` | keep Claude sessions alive for two idle hours | `index.ts` |
+| `MCP_MAX_SESSIONS` | `100` | bound memory on the public endpoint | `index.ts` |
 
 > ⚠️ **Never run `nitrostack-cli start` in production.** It reads the `--port` *flag* only
 > (`const port = options.port || '3000'`) and then **overrides `PORT` to 3000**, discarding the one

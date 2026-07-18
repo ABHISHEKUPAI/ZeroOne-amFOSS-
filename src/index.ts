@@ -45,6 +45,10 @@ function applyDeploymentDefaults() {
     process.env.MCP_TRANSPORT_TYPE = 'http';
     process.env.HOST ||= '0.0.0.0';
     process.env.PORT ||= '3000';
+    // Claude can keep a connector session open while the user iterates on a design.
+    // NitroStack's 30-minute default can expire that session between tool calls.
+    process.env.MCP_SESSION_TIMEOUT_MS ||= '7200000';
+    process.env.MCP_MAX_SESSIONS ||= '100';
   }
   process.env.NITROSTACK_APP_MODE ||= 'universal';
 }
